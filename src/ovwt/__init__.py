@@ -13,7 +13,7 @@ import sklearn.metrics
 import sklearn.model_selection
 import sklearn.utils
 import xgboost as xgb
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 
 def convert_labels_to_boolean(labels: np.ndarray, wt_label: str) -> np.ndarray:
@@ -332,6 +332,17 @@ def configure_logging(
     )
 
 
+def log_config(cfg: DictConfig) -> None:
+    """
+    Logs the Hydra config at INFO level.
+
+    Args:
+        cfg (DictConfig):
+            The Hydra config to log.
+    """
+    logging.info("Config:\n%s", OmegaConf.to_yaml(cfg))
+
+
 @hydra.main(config_path="pkg://ovwt.conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """
@@ -352,13 +363,14 @@ def main(cfg: DictConfig) -> None:
     out_dir = pathlib.Path(cfg.app.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     configure_logging(out_dir / "ovwt.log", level=cfg.app.log_level)
+    log_config(cfg)
 
     logging.info("Reading feature file: %s", cfg.app.feature_file)
     feature_df = read_feature_file(cfg.app.feature_file)
 
     unique_vars = feature_df.get_column(cfg.app.label_col).unique().to_list()
     variants = [v for v in unique_vars if v != cfg.app.wt_label]
-    logging.info("Found %d variant(s) to classify: %s", len(variants), variants)
+    logging.info("Found %d variant(s) to profile", len(variants))
 
     train_all, test_all, val_all = train_test_val_split(feature_df, cfg)
     logging.info(

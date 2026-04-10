@@ -36,7 +36,9 @@ def _make_df(
 
 
 def _split_cfg(label_col: str = "label") -> OmegaConf:
-    return OmegaConf.create({"app": {"label_col": label_col, "seed": 0, "feature_cols": None}})
+    return OmegaConf.create(
+        {"app": {"label_col": label_col, "seed": 0, "feature_cols": None}}
+    )
 
 
 # ---------------------------------------------------------------------------
