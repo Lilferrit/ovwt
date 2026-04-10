@@ -46,7 +46,7 @@ ovwt \
   app.label_col=aaChanges \
   app.wt_label=WT \
   app.out_dir=/path/to/output \
-  xgboost.max_depth=6 \
+  xgboost.params.max_depth=6 \
   xgboost.num_boost_round=200
 ```
 
@@ -67,15 +67,16 @@ app:
   seed: 42
 
 xgboost:
-  nthread: -1
-  max_depth: 3
-  colsample_bytree: 0.7
-  colsample_bylevel: 0.7
-  colsample_bynode: 0.7
-  subsample: 0.5
   num_boost_round: 100
   early_stopping_rounds: 5
   weigh_samples: true
+  params:
+    nthread: -1
+    max_depth: 3
+    colsample_bytree: 0.7
+    colsample_bylevel: 0.7
+    colsample_bynode: 0.7
+    subsample: 0.5
 ```
 
 Then run:
@@ -93,13 +94,24 @@ ovwt --config-path /path/to/dir --config-name my_experiment
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `feature_file` | yes | — | Path to the input feature file (`.parquet`, `.pq`, or `.csv`). |
-| `label_col` | yes | — | Name of the column containing cell labels. |
-| `wt_label` | yes | — | Label value identifying wild-type cells. All other unique values are treated as variants. |
 | `out_dir` | yes | — | Directory where `results.csv`, `models.pkl`, and `ovwt.log` are written. Created if it does not exist. |
+| `label_col` | no | `aaChanges` | Name of the column containing cell labels. |
+| `wt_label` | no | `WT` | Label value identifying wild-type cells. All other unique values are treated as variants. |
 | `log_level` | no | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). Case-insensitive. |
 | `seed` | no | `42` | Random seed for the train/val/test split and XGBoost. |
+| `feature_cols` | no | `null` | Explicit list of feature column names to use. If `null`, feature columns are inferred automatically (any column starting with an uppercase letter and containing an underscore). |
 
 ### `xgboost`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `num_boost_round` | `100` | Maximum number of boosting rounds. |
+| `early_stopping_rounds` | `5` | Stop if validation AUC does not improve for this many consecutive rounds. |
+| `weigh_samples` | `true` | If `true`, apply balanced class weights to the training set to correct for class imbalance. |
+
+#### `xgboost.params`
+
+Passed directly to `xgb.train`. Any parameter supported by XGBoost can be added here. `objective`, `eval_metric`, and `seed` are set automatically and should not be specified.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -109,9 +121,6 @@ ovwt --config-path /path/to/dir --config-name my_experiment
 | `colsample_bylevel` | `0.7` | Fraction of features sampled per tree level. |
 | `colsample_bynode` | `0.7` | Fraction of features sampled per split node. |
 | `subsample` | `0.5` | Fraction of rows sampled per tree. |
-| `num_boost_round` | `100` | Maximum number of boosting rounds. |
-| `early_stopping_rounds` | `5` | Stop if validation AUC does not improve for this many consecutive rounds. |
-| `weigh_samples` | `true` | If `true`, apply balanced class weights to the training set to correct for class imbalance. |
 
 ## Outputs
 

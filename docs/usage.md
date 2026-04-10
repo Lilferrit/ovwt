@@ -20,7 +20,7 @@ ovwt \
   app.label_col=aaChanges \
   app.wt_label=WT \
   app.out_dir=/path/to/output \
-  xgboost.max_depth=6 \
+  xgboost.params.max_depth=6 \
   xgboost.num_boost_round=200
 ```
 
@@ -41,15 +41,16 @@ app:
   seed: 42
 
 xgboost:
-  nthread: -1
-  max_depth: 3
-  colsample_bytree: 0.7
-  colsample_bylevel: 0.7
-  colsample_bynode: 0.7
-  subsample: 0.5
   num_boost_round: 100
   early_stopping_rounds: 5
   weigh_samples: true
+  params:
+    nthread: -1
+    max_depth: 3
+    colsample_bytree: 0.7
+    colsample_bylevel: 0.7
+    colsample_bynode: 0.7
+    subsample: 0.5
 ```
 
 Then run:
