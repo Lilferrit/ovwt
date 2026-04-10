@@ -20,10 +20,6 @@ def convert_labels_to_boolean(labels: np.ndarray, wt_label: str) -> np.ndarray:
     """
     Converts an array of labels to boolean values.
 
-    The function identifies the unique classes in the input array and maps the first
-    class to False and the second class to True. If there are more than two unique
-    classes, a ValueError is raised.
-
     Args:
         labels (np.ndarray):
             An array of labels to be converted.
@@ -77,7 +73,9 @@ def train_xgboost(
             Validation data including feature columns and the label column.
         cfg (DictConfig):
             Hydra config. Uses cfg.app.label_col, cfg.app.wt_label, and
-            all fields of cfg.xgboost.
+            cfg.xgboost.num_boost_round, cfg.xgboost.early_stopping_rounds,
+            cfg.xgboost.weigh_samples, and cfg.xgboost.params (passed directly
+            to xgb.train, with objective, eval_metric, and seed added).
 
     Returns:
         xgb.Booster:
@@ -98,17 +96,10 @@ def train_xgboost(
     dtrain = get_dmatrix(train, label_col, wt_label, weight=sample_weight)
     deval = get_dmatrix(val, label_col, wt_label)
 
-    params = {
-        "objective": "binary:logistic",
-        "max_depth": cfg.xgboost.max_depth,
-        "colsample_bytree": cfg.xgboost.colsample_bytree,
-        "colsample_bylevel": cfg.xgboost.colsample_bylevel,
-        "colsample_bynode": cfg.xgboost.colsample_bynode,
-        "subsample": cfg.xgboost.subsample,
-        "eval_metric": "auc",
-        "seed": cfg.app.seed,
-        "nthread": cfg.xgboost.nthread,
-    }
+    params = dict(cfg.xgboost.params)
+    params["objective"] = "binary:logistic"
+    params["eval_metric"] = "auc"
+    params["seed"] = cfg.app.seed
 
     return xgb.train(
         params,
@@ -237,6 +228,26 @@ def read_feature_file(file_path: PathLike) -> pl.DataFrame:
         )
 
 
+def get_feature_cols(df: pl.DataFrame) -> list[str]:
+    """
+    Returns the CellProfiler feature columns from a DataFrame.
+
+    Infers feature columns as those whose name starts with an uppercase letter
+    and contains an underscore, matching CellProfiler naming conventions.
+
+    Args:
+        df (pl.DataFrame):
+            DataFrame to extract feature column names from.
+
+    Returns:
+        list[str]:
+            Column names identified as CellProfiler features.
+    """
+    return [
+        col for col in df.columns if len(col) > 0 and col[0].isupper() and "_" in col
+    ]
+
+
 def train_test_val_split(
     data_df: pl.DataFrame,
     cfg: DictConfig,
@@ -251,10 +262,9 @@ def train_test_val_split(
         data_df (pl.DataFrame):
             The input data as a Polars DataFrame.
         cfg (DictConfig):
-            Hydra config. Uses cfg.app.label_col and cfg.app.seed. Feature
-            columns are inferred as columns that start with an uppercase letter
-            and contain an underscore, matching CellProfiler feature naming
-            conventions.
+            Hydra config. Uses cfg.app.label_col, cfg.app.seed, and
+            cfg.app.feature_cols. If cfg.app.feature_cols is None, feature
+            columns are inferred via `get_feature_cols`.
 
     Returns:
         tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
@@ -262,7 +272,10 @@ def train_test_val_split(
             containing the feature columns and the label column.
     """
     label_col = cfg.app.label_col
-    feature_cols = [col for col in data_df.columns if col[0].isupper() and "_" in col]
+    if cfg.app.feature_cols is not None:
+        feature_cols = list(cfg.app.feature_cols)
+    else:
+        feature_cols = get_feature_cols(data_df)
 
     select_cols = feature_cols + [label_col]
     labels = data_df.get_column(label_col).to_numpy()
@@ -361,13 +374,13 @@ def main(cfg: DictConfig) -> None:
     for v in variants:
         logging.info("Training model for variant '%s' vs. '%s'", v, cfg.app.wt_label)
         keep = pl.col(cfg.app.label_col).is_in([v, cfg.app.wt_label])
-        
+
         train, test, val = (
             train_all.filter(keep),
             test_all.filter(keep),
             val_all.filter(keep),
         )
-        
+
         logging.info(
             "Subset sizes — train: %d, val: %d, test: %d",
             len(train),
@@ -377,7 +390,7 @@ def main(cfg: DictConfig) -> None:
 
         model = train_xgboost(train, val, cfg)
         result = test_xgboost(model, train, val, test, cfg)
-        
+
         logging.info(
             "Results for '%s': train_auroc=%.4f, val_auroc=%.4f, test_auroc=%.4f",
             v,
@@ -385,7 +398,7 @@ def main(cfg: DictConfig) -> None:
             result["val_auroc"],
             result["test_auroc"],
         )
-        
+
         results.append(result)
         models[v] = model
 

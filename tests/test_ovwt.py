@@ -11,11 +11,11 @@ from ovwt import (
     configure_logging,
     convert_labels_to_boolean,
     get_dmatrix,
+    get_feature_cols,
     read_feature_file,
-    test_xgboost as evaluate_splits,
-    train_test_val_split,
-    train_xgboost,
 )
+from ovwt import test_xgboost as evaluate_splits
+from ovwt import train_test_val_split, train_xgboost
 
 
 def _make_df(
@@ -36,7 +36,42 @@ def _make_df(
 
 
 def _split_cfg(label_col: str = "label") -> OmegaConf:
-    return OmegaConf.create({"app": {"label_col": label_col, "seed": 0}})
+    return OmegaConf.create({"app": {"label_col": label_col, "seed": 0, "feature_cols": None}})
+
+
+# ---------------------------------------------------------------------------
+# get_feature_cols
+# ---------------------------------------------------------------------------
+
+
+def test_get_feature_cols_returns_cellprofiler_columns():
+    df = pl.DataFrame({"Intensity_Mean": [1.0], "Texture_Var": [2.0], "label": ["WT"]})
+    assert get_feature_cols(df) == ["Intensity_Mean", "Texture_Var"]
+
+
+def test_get_feature_cols_excludes_lowercase_columns():
+    df = pl.DataFrame({"Intensity_Mean": [1.0], "metadata": ["foo"]})
+    assert get_feature_cols(df) == ["Intensity_Mean"]
+
+
+def test_get_feature_cols_excludes_uppercase_without_underscore():
+    df = pl.DataFrame({"Intensity_Mean": [1.0], "Intensity": [2.0]})
+    assert get_feature_cols(df) == ["Intensity_Mean"]
+
+
+def test_get_feature_cols_empty_dataframe():
+    df = pl.DataFrame({"label": []})
+    assert get_feature_cols(df) == []
+
+
+def test_get_feature_cols_no_matching_columns():
+    df = pl.DataFrame({"label": ["WT"], "metadata": ["foo"]})
+    assert get_feature_cols(df) == []
+
+
+def test_get_feature_cols_all_columns_match():
+    df = pl.DataFrame({"Intensity_Mean": [1.0], "Texture_Var": [2.0]})
+    assert set(get_feature_cols(df)) == {"Intensity_Mean", "Texture_Var"}
 
 
 # ---------------------------------------------------------------------------
@@ -262,15 +297,17 @@ def _make_xgb_cfg(weigh_samples: bool = True) -> OmegaConf:
         {
             "app": {"label_col": "label", "wt_label": "WT", "seed": 0},
             "xgboost": {
-                "nthread": 1,
-                "max_depth": 2,
-                "colsample_bytree": 1.0,
-                "colsample_bylevel": 1.0,
-                "colsample_bynode": 1.0,
-                "subsample": 1.0,
                 "num_boost_round": 5,
                 "early_stopping_rounds": 3,
                 "weigh_samples": weigh_samples,
+                "params": {
+                    "nthread": 1,
+                    "max_depth": 2,
+                    "colsample_bytree": 1.0,
+                    "colsample_bylevel": 1.0,
+                    "colsample_bynode": 1.0,
+                    "subsample": 1.0,
+                },
             },
         }
     )
