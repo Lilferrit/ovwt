@@ -1,0 +1,20 @@
+# @package _global_
+
+app:
+  feature_file: ???
+  label_col: aaChanges
+  wt_label: WT
+  out_dir: ???
+  log_level: INFO
+  seed: 42
+
+xgboost:
+  nthread: -1
+  max_depth: 3
+  colsample_bytree: 0.7
+  colsample_bylevel: 0.7
+  colsample_bynode: 0.7
+  subsample: 0.5
+  num_boost_round: 100
+  early_stopping_rounds: 5
+  weigh_samples: true
