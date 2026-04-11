@@ -456,11 +456,11 @@ def main(cfg: DictConfig) -> None:
     logging.info("Reading feature file: %s", cfg.app.feature_file)
     feature_df = read_feature_file(cfg.app.feature_file)
 
-    unique_vars = feature_df.get_column(cfg.app.label_col).unique().to_list()
+    train_all, test_all, val_all = train_test_val_split(feature_df, cfg)
+
+    unique_vars = train_all.get_column(cfg.app.label_col).unique().to_list()
     variants = [v for v in unique_vars if v != cfg.app.wt_label]
     logging.info("Found %d variant(s) to profile", len(variants))
-
-    train_all, test_all, val_all = train_test_val_split(feature_df, cfg)
     logging.info(
         "Split sizes — train: %d, val: %d, test: %d",
         len(train_all),
