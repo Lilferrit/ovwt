@@ -468,6 +468,16 @@ def main(cfg: DictConfig) -> None:
         len(test_all),
     )
 
+    if cfg.app.save_splits:
+        for name, split_df in (
+            ("train", train_all),
+            ("test", test_all),
+            ("val", val_all),
+        ):
+            split_path = out_dir / f"{name}.parquet"
+            split_df.write_parquet(split_path)
+            logging.info("Wrote %s split to %s", name, split_path)
+
     results = []
     models = {}
 

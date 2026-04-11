@@ -106,6 +106,7 @@ ovwt --config-path /path/to/dir --config-name my_experiment
 | `feature_cols` | no | `null` | Explicit list of feature column names to use. If `null`, feature columns are inferred automatically (any column starting with an uppercase letter and containing an underscore). |
 | `min_cells` | no | `250` | If set to an integer, variants with fewer than this many cells are excluded before splitting. Wild-type cells are never filtered. |
 | `downsample_wt` | no | `true` | If `true`, wild-type cells are downsampled to the count of the largest non-wild-type variant before splitting. |
+| `save_splits` | no | `false` | If `true`, the train, test, and validation splits are written as `train.parquet`, `test.parquet`, and `val.parquet` in `out_dir`. |
 
 ### `xgboost`
 
@@ -137,6 +138,9 @@ All outputs are written to `out_dir`.
 | `results.csv` | One row per variant with columns `variant`, `train_auroc`, `train_accuracy`, `val_auroc`, `val_accuracy`, `test_auroc`, `test_accuracy`. |
 | `models.pkl` | Python pickle file containing a `dict` mapping each variant label to its trained `xgboost.Booster`. |
 | `ovwt.log` | Full log of the run, mirrored from stdout. |
+| `train.parquet` | Training split (only written when `app.save_splits: true`). |
+| `test.parquet` | Test split (only written when `app.save_splits: true`). |
+| `val.parquet` | Validation split (only written when `app.save_splits: true`). |
 
 ## Development
 
