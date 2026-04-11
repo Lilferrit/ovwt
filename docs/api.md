@@ -15,3 +15,5 @@
         - convert_labels_to_boolean
         - configure_logging
         - log_config
+        - profile_variant
+        - main

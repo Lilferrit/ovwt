@@ -15,7 +15,7 @@ from ovwt import (
     get_feature_cols,
     read_feature_file,
 )
-from ovwt import test_xgboost as evaluate_splits
+from ovwt import profile_variant, test_xgboost as evaluate_splits
 from ovwt import train_test_val_split, train_xgboost
 
 
@@ -142,6 +142,33 @@ def test_get_dmatrix_no_weights_by_default():
     df = _make_df(n=10)
     dm = get_dmatrix(df, "label", "WT")
     assert len(dm.get_weight()) == 0
+
+
+def test_get_dmatrix_inf_replaced_with_nan():
+    df = _make_df(n=10)
+    df = df.with_columns(pl.lit(float("inf")).alias("Inf_Feature"))
+    # Should not raise; inf values are coerced to nan (missing)
+    dm = get_dmatrix(df, "label", "WT")
+    assert dm.num_row() == 10
+
+
+def test_get_dmatrix_neg_inf_replaced_with_nan():
+    df = _make_df(n=10)
+    df = df.with_columns(pl.lit(float("-inf")).alias("NegInf_Feature"))
+    dm = get_dmatrix(df, "label", "WT")
+    assert dm.num_row() == 10
+
+
+def test_get_dmatrix_mixed_inf_and_valid_values():
+    rng = np.random.default_rng(0)
+    values = rng.random(10).tolist()
+    values[0] = float("inf")
+    values[5] = float("-inf")
+    df = pl.DataFrame(
+        {"Intensity_Mean": values, "label": ["WT"] * 5 + ["V1"] * 5}
+    )
+    dm = get_dmatrix(df, "label", "WT")
+    assert dm.num_row() == 10
 
 
 # ---------------------------------------------------------------------------
@@ -518,3 +545,109 @@ def test_test_xgboost_separable_data_high_auroc(trained_model_and_splits):
     model, train, val, test, cfg = trained_model_and_splits
     result = evaluate_splits(model, train, val, test, cfg)
     assert result["train_auroc"] > 0.9
+
+
+# ---------------------------------------------------------------------------
+# profile_variant
+# ---------------------------------------------------------------------------
+
+
+def _make_multisplit(
+    variant: str = "V1",
+    other_variant: str = "V2",
+    n_each: int = 30,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """
+    Build train/test/val splits containing two variants plus WT.
+
+    V1 is linearly separable from WT (high Intensity_Mean vs low).
+    V2 has the same distribution as WT (not separable).
+    """
+    rng = np.random.default_rng(42)
+    half = n_each // 2
+
+    def _block(low: float, high: float, label: str, n: int) -> dict:
+        return {"Intensity_Mean": rng.uniform(low, high, n).tolist(), "label": [label] * n}
+
+    def _split(rows: list[dict]) -> pl.DataFrame:
+        return pl.concat([pl.DataFrame(r) for r in rows])
+
+    wt_train = _block(0.6, 1.0, "WT", n_each)
+    v1_train = _block(0.0, 0.4, variant, n_each)
+    v2_train = _block(0.6, 1.0, other_variant, n_each)
+
+    wt_val = _block(0.6, 1.0, "WT", half)
+    v1_val = _block(0.0, 0.4, variant, half)
+    v2_val = _block(0.6, 1.0, other_variant, half)
+
+    wt_test = _block(0.6, 1.0, "WT", half)
+    v1_test = _block(0.0, 0.4, variant, half)
+    v2_test = _block(0.6, 1.0, other_variant, half)
+
+    train = _split([wt_train, v1_train, v2_train])
+    val = _split([wt_val, v1_val, v2_val])
+    test = _split([wt_test, v1_test, v2_test])
+    return train, val, test
+
+
+@pytest.fixture()
+def profile_variant_splits():
+    train, val, test = _make_multisplit()
+    cfg = _make_xgb_cfg()
+    return train, val, test, cfg
+
+
+def test_profile_variant_returns_booster(profile_variant_splits):
+    import xgboost as xgb
+
+    train, val, test, cfg = profile_variant_splits
+    result, model = profile_variant("V1", train, test, val, cfg)
+    assert isinstance(model, xgb.Booster)
+
+
+def test_profile_variant_returns_result_dict(profile_variant_splits):
+    train, val, test, cfg = profile_variant_splits
+    result, _ = profile_variant("V1", train, test, val, cfg)
+    assert isinstance(result, dict)
+
+
+def test_profile_variant_result_keys(profile_variant_splits):
+    train, val, test, cfg = profile_variant_splits
+    result, _ = profile_variant("V1", train, test, val, cfg)
+    expected_keys = {
+        "variant",
+        "train_auroc",
+        "train_accuracy",
+        "val_auroc",
+        "val_accuracy",
+        "test_auroc",
+        "test_accuracy",
+    }
+    assert set(result.keys()) == expected_keys
+
+
+def test_profile_variant_result_variant_name(profile_variant_splits):
+    train, val, test, cfg = profile_variant_splits
+    result, _ = profile_variant("V1", train, test, val, cfg)
+    assert result["variant"] == "V1"
+
+
+def test_profile_variant_auroc_in_range(profile_variant_splits):
+    train, val, test, cfg = profile_variant_splits
+    result, _ = profile_variant("V1", train, test, val, cfg)
+    for key in ("train_auroc", "val_auroc", "test_auroc"):
+        assert 0.0 <= result[key] <= 1.0, f"{key} out of range: {result[key]}"
+
+
+def test_profile_variant_high_auroc_on_separable_data(profile_variant_splits):
+    train, val, test, cfg = profile_variant_splits
+    result, _ = profile_variant("V1", train, test, val, cfg)
+    assert result["train_auroc"] > 0.9
+
+
+def test_profile_variant_filters_to_target_variant_only(profile_variant_splits):
+    """V2 has the same distribution as WT, so it should be near-chance AUROC."""
+    train, val, test, cfg = profile_variant_splits
+    result, _ = profile_variant("V2", train, test, val, cfg)
+    # V2 is indistinguishable from WT, so the model should not achieve high AUROC
+    assert result["train_auroc"] < 0.75

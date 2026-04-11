@@ -3,6 +3,7 @@ import logging
 import pathlib
 import pickle
 import sys
+import traceback
 from os import PathLike
 from typing import Optional
 
@@ -53,7 +54,8 @@ def get_dmatrix(
             The XGBoost DMatrix with boolean labels.
     """
     feature_cols = [col for col in df.columns if col != label_col]
-    x = df.select(feature_cols).to_numpy()
+    x = df.select(feature_cols).cast(pl.Float64).to_numpy().copy()
+    x[~np.isfinite(x)] = np.nan
     y = convert_labels_to_boolean(df.get_column(label_col).to_numpy(), wt_label)
     return xgb.DMatrix(x, label=y, weight=weight)
 
@@ -431,6 +433,61 @@ def log_config(cfg: DictConfig) -> None:
     logging.info("Config:\n%s", OmegaConf.to_yaml(cfg))
 
 
+def profile_variant(
+    v: str,
+    train_all: pl.DataFrame,
+    test_all: pl.DataFrame,
+    val_all: pl.DataFrame,
+    cfg: DictConfig,
+) -> tuple[dict, xgb.Booster]:
+    """
+    Train and evaluate an XGBoost classifier for a single variant vs. wild-type.
+
+    Filters each split to rows belonging to ``v`` or the wild-type label, trains
+    a model on the training split, and evaluates it on all three splits.
+
+    Args:
+        v (str):
+            The variant label to profile.
+        train_all (pl.DataFrame):
+            Full training split (all variants and wild-type).
+        test_all (pl.DataFrame):
+            Full test split.
+        val_all (pl.DataFrame):
+            Full validation split.
+        cfg (DictConfig):
+            Hydra config. Uses cfg.app.label_col, cfg.app.wt_label, and
+            cfg.xgboost settings.
+
+    Returns:
+        tuple[dict, xgb.Booster]:
+            A result dict (as returned by ``test_xgboost``) and the trained
+            ``xgb.Booster``.
+    """
+    keep = pl.col(cfg.app.label_col).is_in([v, cfg.app.wt_label])
+    train, test, val = (
+        train_all.filter(keep),
+        test_all.filter(keep),
+        val_all.filter(keep),
+    )
+    logging.info(
+        "Subset sizes — train: %d, val: %d, test: %d",
+        len(train),
+        len(val),
+        len(test),
+    )
+    model = train_xgboost(train, val, cfg)
+    result = test_xgboost(model, train, val, test, cfg)
+    logging.info(
+        "Results for '%s': train_auroc=%.4f, val_auroc=%.4f, test_auroc=%.4f",
+        v,
+        result["train_auroc"],
+        result["val_auroc"],
+        result["test_auroc"],
+    )
+    return result, model
+
+
 @hydra.main(config_path="pkg://ovwt.conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """
@@ -455,11 +512,10 @@ def main(cfg: DictConfig) -> None:
 
     logging.info("Reading feature file: %s", cfg.app.feature_file)
     feature_df = read_feature_file(cfg.app.feature_file)
-
     train_all, test_all, val_all = train_test_val_split(feature_df, cfg)
-
     unique_vars = train_all.get_column(cfg.app.label_col).unique().to_list()
     variants = [v for v in unique_vars if v != cfg.app.wt_label]
+    
     logging.info("Found %d variant(s) to profile", len(variants))
     logging.info(
         "Split sizes — train: %d, val: %d, test: %d",
@@ -483,32 +539,15 @@ def main(cfg: DictConfig) -> None:
 
     for v in variants:
         logging.info("Training model for variant '%s' vs. '%s'", v, cfg.app.wt_label)
-        keep = pl.col(cfg.app.label_col).is_in([v, cfg.app.wt_label])
-
-        train, test, val = (
-            train_all.filter(keep),
-            test_all.filter(keep),
-            val_all.filter(keep),
-        )
-
-        logging.info(
-            "Subset sizes — train: %d, val: %d, test: %d",
-            len(train),
-            len(val),
-            len(test),
-        )
-
-        model = train_xgboost(train, val, cfg)
-        result = test_xgboost(model, train, val, test, cfg)
-
-        logging.info(
-            "Results for '%s': train_auroc=%.4f, val_auroc=%.4f, test_auroc=%.4f",
-            v,
-            result["train_auroc"],
-            result["val_auroc"],
-            result["test_auroc"],
-        )
-
+        try:
+            result, model = profile_variant(v, train_all, test_all, val_all, cfg)
+        except Exception:
+            logging.warning(
+                "Failed to profile variant '%s', skipping:\n%s",
+                v,
+                traceback.format_exc(),
+            )
+            continue
         results.append(result)
         models[v] = model
 
