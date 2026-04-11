@@ -15,6 +15,8 @@ Settings can be provided via a [YAML config file](usage.md#with-a-config-file), 
 | `log_level` | no | `INFO` | Logging verbosity. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`. Case-insensitive. |
 | `seed` | no | `42` | Random seed passed to the train/val/test split and XGBoost. |
 | `feature_cols` | no | `null` | Explicit list of feature column names to use. If `null`, feature columns are inferred automatically (see below). |
+| `min_cells` | no | `250` | If set to an integer, any non-wild-type variant with fewer than this many cells is removed before splitting. Wild-type cells are never filtered by this option. |
+| `downsample_wt` | no | `true` | If `true`, wild-type cells are randomly downsampled to match the cell count of the largest remaining variant before splitting. Uses `seed` for reproducibility. |
 
 ## `xgboost`
 

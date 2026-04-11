@@ -248,6 +248,81 @@ def get_feature_cols(df: pl.DataFrame) -> list[str]:
     ]
 
 
+def downsample_wildtype(
+    data_df: pl.DataFrame,
+    label_col: str,
+    wt_label: str,
+    seed: int,
+) -> pl.DataFrame:
+    """
+    Downsample wildtype cells to the count of the largest non-wildtype variant.
+
+    Args:
+        data_df (pl.DataFrame):
+            Input DataFrame containing a label column.
+        label_col (str):
+            Name of the column holding class labels.
+        wt_label (str):
+            The label value that identifies wildtype cells.
+        seed (int):
+            Random seed for reproducible sampling.
+
+    Returns:
+        pl.DataFrame:
+            DataFrame with wildtype rows downsampled. Non-wildtype rows are
+            unchanged. Row order is not guaranteed.
+    """
+    max_variant_count = (
+        data_df.filter(pl.col(label_col) != wt_label)
+        .group_by(label_col)
+        .len()
+        .get_column("len")
+        .max()
+    )
+    wt_df = data_df.filter(pl.col(label_col) == wt_label)
+    if max_variant_count is not None and len(wt_df) > max_variant_count:
+        wt_df = wt_df.sample(n=max_variant_count, seed=seed)
+    return pl.concat([data_df.filter(pl.col(label_col) != wt_label), wt_df])
+
+
+def filter_min_cells(
+    data_df: pl.DataFrame,
+    label_col: str,
+    wt_label: str,
+    min_cells: int,
+) -> pl.DataFrame:
+    """
+    Remove variants (non-wildtype labels) with fewer than ``min_cells`` cells.
+
+    Wildtype rows are always retained regardless of count.
+
+    Args:
+        data_df (pl.DataFrame):
+            Input DataFrame containing a label column.
+        label_col (str):
+            Name of the column holding class labels.
+        wt_label (str):
+            The label value that identifies wildtype cells.
+        min_cells (int):
+            Minimum number of cells a variant must have to be retained.
+
+    Returns:
+        pl.DataFrame:
+            DataFrame with under-represented variants removed.
+    """
+    variant_counts = (
+        data_df.filter(pl.col(label_col) != wt_label).group_by(label_col).len()
+    )
+    keep_labels = (
+        variant_counts.filter(pl.col("len") >= min_cells)
+        .get_column(label_col)
+        .to_list()
+    )
+    return data_df.filter(
+        (pl.col(label_col) == wt_label) | pl.col(label_col).is_in(keep_labels)
+    )
+
+
 def train_test_val_split(
     data_df: pl.DataFrame,
     cfg: DictConfig,
@@ -278,8 +353,21 @@ def train_test_val_split(
         feature_cols = get_feature_cols(data_df)
 
     select_cols = feature_cols + [label_col]
+    data_df = data_df.select(select_cols)
+    data_df = data_df.filter(pl.col(label_col).is_not_null())
+
+    if cfg.app.min_cells is not None:
+        data_df = filter_min_cells(
+            data_df, label_col, cfg.app.wt_label, cfg.app.min_cells
+        )
+
+    if cfg.app.downsample_wt:
+        data_df = downsample_wildtype(
+            data_df, label_col, cfg.app.wt_label, cfg.app.seed
+        )
+
+    data_df = data_df.with_row_index("__idx__")
     labels = data_df.get_column(label_col).to_numpy()
-    data_df = data_df.select(select_cols).with_row_index("__idx__")
     all_idx = data_df.get_column("__idx__").to_numpy()
 
     train_idx, val_test_idx = sklearn.model_selection.train_test_split(

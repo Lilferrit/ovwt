@@ -6,8 +6,10 @@ For each variant in the dataset, the tool subsets to that variant and the wild-t
 ## How it works
 
 1. Read a feature file (Parquet or CSV) containing CellProfiler features and a label column.
-2. Perform a single stratified 80/10/10 train/val/test split across all cells.
-3. For each non-wild-type label found in the dataset:
+2. Optionally filter out variants with fewer than `min_cells` cells.
+3. Optionally downsample wild-type cells to the size of the largest remaining variant.
+4. Perform a single stratified 80/10/10 train/val/test split across all cells.
+5. For each non-wild-type label found in the dataset:
    - Filter each split to rows belonging to that variant or the wild-type.
    - Optionally compute balanced sample weights to correct for class imbalance.
    - Train an XGBoost classifier with early stopping on the validation set.
@@ -65,6 +67,8 @@ app:
   out_dir: /path/to/output
   log_level: INFO
   seed: 42
+  min_cells: 250   # remove variants with fewer than 250 cells; null to disable
+  downsample_wt: true  # downsample WT to the size of the largest variant
 
 xgboost:
   num_boost_round: 100
@@ -100,6 +104,8 @@ ovwt --config-path /path/to/dir --config-name my_experiment
 | `log_level` | no | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). Case-insensitive. |
 | `seed` | no | `42` | Random seed for the train/val/test split and XGBoost. |
 | `feature_cols` | no | `null` | Explicit list of feature column names to use. If `null`, feature columns are inferred automatically (any column starting with an uppercase letter and containing an underscore). |
+| `min_cells` | no | `250` | If set to an integer, variants with fewer than this many cells are excluded before splitting. Wild-type cells are never filtered. |
+| `downsample_wt` | no | `true` | If `true`, wild-type cells are downsampled to the count of the largest non-wild-type variant before splitting. |
 
 ### `xgboost`
 

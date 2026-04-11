@@ -1,6 +1,5 @@
 import logging
-import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import polars as pl
@@ -10,6 +9,8 @@ from omegaconf import OmegaConf
 from ovwt import (
     configure_logging,
     convert_labels_to_boolean,
+    downsample_wildtype,
+    filter_min_cells,
     get_dmatrix,
     get_feature_cols,
     read_feature_file,
@@ -37,7 +38,15 @@ def _make_df(
 
 def _split_cfg(label_col: str = "label") -> OmegaConf:
     return OmegaConf.create(
-        {"app": {"label_col": label_col, "seed": 0, "feature_cols": None}}
+        {
+            "app": {
+                "label_col": label_col,
+                "seed": 0,
+                "feature_cols": None,
+                "min_cells": None,
+                "downsample_wt": False,
+            }
+        }
     )
 
 
@@ -166,6 +175,109 @@ def test_read_feature_file_unsupported_extension(tmp_path):
     path.write_text("hello")
     with pytest.raises(ValueError, match="Unsupported file format"):
         read_feature_file(path)
+
+
+# ---------------------------------------------------------------------------
+# downsample_wildtype
+# ---------------------------------------------------------------------------
+
+
+def _make_multilabel_df(wt_count: int, variant_counts: dict[str, int]) -> pl.DataFrame:
+    """Build a DataFrame with WT rows and multiple named variants."""
+    rng = np.random.default_rng(0)
+    rows: dict[str, list] = {"Intensity_Mean": [], "label": []}
+    for _ in range(wt_count):
+        rows["Intensity_Mean"].append(rng.random())
+        rows["label"].append("WT")
+    for label, n in variant_counts.items():
+        for _ in range(n):
+            rows["Intensity_Mean"].append(rng.random())
+            rows["label"].append(label)
+    return pl.DataFrame(rows)
+
+
+def test_downsample_wildtype_reduces_wt_to_max_variant():
+    df = _make_multilabel_df(wt_count=100, variant_counts={"V1": 30, "V2": 20})
+    result = downsample_wildtype(df, "label", "WT", seed=0)
+    wt_count = (result.get_column("label") == "WT").sum()
+    assert wt_count == 30
+
+
+def test_downsample_wildtype_preserves_all_variant_rows():
+    df = _make_multilabel_df(wt_count=100, variant_counts={"V1": 30, "V2": 20})
+    result = downsample_wildtype(df, "label", "WT", seed=0)
+    assert (result.get_column("label") == "V1").sum() == 30
+    assert (result.get_column("label") == "V2").sum() == 20
+
+
+def test_downsample_wildtype_no_op_when_wt_already_smaller():
+    df = _make_multilabel_df(wt_count=10, variant_counts={"V1": 30})
+    result = downsample_wildtype(df, "label", "WT", seed=0)
+    assert (result.get_column("label") == "WT").sum() == 10
+
+
+def test_downsample_wildtype_no_op_when_wt_equals_max_variant():
+    df = _make_multilabel_df(wt_count=30, variant_counts={"V1": 30})
+    result = downsample_wildtype(df, "label", "WT", seed=0)
+    assert (result.get_column("label") == "WT").sum() == 30
+
+
+def test_downsample_wildtype_reproducible_with_same_seed():
+    df = _make_multilabel_df(wt_count=100, variant_counts={"V1": 40})
+    r1 = downsample_wildtype(df, "label", "WT", seed=7)
+    r2 = downsample_wildtype(df, "label", "WT", seed=7)
+    wt1 = r1.filter(pl.col("label") == "WT").sort("Intensity_Mean")
+    wt2 = r2.filter(pl.col("label") == "WT").sort("Intensity_Mean")
+    assert wt1.equals(wt2)
+
+
+def test_downsample_wildtype_total_row_count():
+    df = _make_multilabel_df(wt_count=100, variant_counts={"V1": 30, "V2": 20})
+    result = downsample_wildtype(df, "label", "WT", seed=0)
+    assert len(result) == 30 + 30 + 20
+
+
+# ---------------------------------------------------------------------------
+# filter_min_cells
+# ---------------------------------------------------------------------------
+
+
+def test_filter_min_cells_removes_variants_below_threshold():
+    df = _make_multilabel_df(wt_count=50, variant_counts={"V1": 10, "V2": 3})
+    result = filter_min_cells(df, "label", "WT", min_cells=5)
+    assert "V2" not in result.get_column("label").to_list()
+    assert "V1" in result.get_column("label").to_list()
+
+
+def test_filter_min_cells_retains_variants_at_threshold():
+    df = _make_multilabel_df(wt_count=50, variant_counts={"V1": 5, "V2": 4})
+    result = filter_min_cells(df, "label", "WT", min_cells=5)
+    assert "V1" in result.get_column("label").to_list()
+    assert "V2" not in result.get_column("label").to_list()
+
+
+def test_filter_min_cells_always_retains_wt():
+    df = _make_multilabel_df(wt_count=3, variant_counts={"V1": 10})
+    result = filter_min_cells(df, "label", "WT", min_cells=5)
+    assert (result.get_column("label") == "WT").sum() == 3
+
+
+def test_filter_min_cells_no_op_when_all_pass():
+    df = _make_multilabel_df(wt_count=20, variant_counts={"V1": 10, "V2": 8})
+    result = filter_min_cells(df, "label", "WT", min_cells=5)
+    assert len(result) == len(df)
+
+
+def test_filter_min_cells_removes_all_variants_when_none_pass():
+    df = _make_multilabel_df(wt_count=20, variant_counts={"V1": 2, "V2": 3})
+    result = filter_min_cells(df, "label", "WT", min_cells=10)
+    assert set(result.get_column("label").to_list()) == {"WT"}
+
+
+def test_filter_min_cells_row_count():
+    df = _make_multilabel_df(wt_count=20, variant_counts={"V1": 10, "V2": 3})
+    result = filter_min_cells(df, "label", "WT", min_cells=5)
+    assert len(result) == 20 + 10
 
 
 # ---------------------------------------------------------------------------

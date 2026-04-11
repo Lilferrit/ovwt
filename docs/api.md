@@ -5,6 +5,8 @@
       members:
         - read_feature_file
         - get_feature_cols
+        - filter_min_cells
+        - downsample_wildtype
         - train_test_val_split
         - train_xgboost
         - test_xgboost

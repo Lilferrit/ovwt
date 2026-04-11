@@ -39,6 +39,8 @@ app:
   out_dir: /path/to/output
   log_level: INFO
   seed: 42
+  min_cells: 250   # remove variants with fewer than 250 cells; null to disable
+  downsample_wt: true  # downsample WT to the size of the largest variant
 
 xgboost:
   num_boost_round: 100

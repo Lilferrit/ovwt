@@ -1,20 +1,11 @@
-# @package _global_
-
-hydra:
-  job:
-    chdir: false
-
 app:
-  feature_file: ???
+  feature_file: /net/fowler/vol1/shared/fisseq/LMNA_T6_T7_R2/output/well1-2-3_grid.cellprofiler_111925.cells_full.csv
   label_col: aaChanges
   wt_label: WT
-  out_dir: ???
+  out_dir: /net/fowler/vol1/shared/FISSEQ_CP_analysis_010725/feature_selection/results/2026-04-09/ovwt/T7_R2
   log_level: INFO
   seed: 42
   feature_cols: null
-  min_cells: 250
-  downsample_wt: true
-
 xgboost:
   num_boost_round: 100
   early_stopping_rounds: 5
